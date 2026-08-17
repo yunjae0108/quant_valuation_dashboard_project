@@ -38,26 +38,20 @@ def create_tables():
             """
             cursor.execute(sql_benchmarks)
             
-            # 4. Create the company profiles table for dashboard caching
-            print("📦 Creating 'company_profiles' table...")
-            sql_profiles = """
-            CREATE TABLE IF NOT EXISTS company_profiles (
+            # 4. Drop old table and recreate with company_name column to ensure schema update
+            print("📦 Recreating 'company_rankings' table with company_name...")
+            cursor.execute("DROP TABLE IF EXISTS company_rankings;")
+            
+            sql_rankings = """
+            CREATE TABLE company_rankings (
                 symbol VARCHAR(10) PRIMARY KEY,
                 company_name VARCHAR(255),
-                price FLOAT,
-                volume BIGINT,
-                avg_volume BIGINT,
-                market_cap BIGINT,
-                industry VARCHAR(100),
-                description TEXT,
-                per FLOAT,
-                pb_ratio FLOAT,
-                enterprise_value BIGINT,
-                ev_ebitda FLOAT,
+                industry VARCHAR(100) NOT NULL,
+                composite_z_score FLOAT,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
             );
             """
-            cursor.execute(sql_profiles)
+            cursor.execute(sql_rankings)
             
         connection.commit()
         print("✅ All tables created successfully in the Cloud!")
