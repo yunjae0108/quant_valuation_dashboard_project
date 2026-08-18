@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 # 1. Load Environment Variables
 load_dotenv()
 
-# 2. Updated Database configuration for Aiven Cloud MySQL
+# 2. Database configuration for Aiven Cloud MySQL
 db_config = {
     "host": os.getenv("DB_HOST"),
     "port": int(os.getenv("DB_PORT", 16078)),
@@ -23,7 +23,6 @@ def create_tables():
     
     try:
         with connection.cursor() as cursor:
-            # 3. Create the benchmark statistics table
             print("📦 Creating 'industry_benchmarks' table...")
             sql_benchmarks = """
             CREATE TABLE IF NOT EXISTS industry_benchmarks (
@@ -38,8 +37,8 @@ def create_tables():
             """
             cursor.execute(sql_benchmarks)
             
-            # 4. Drop old table and recreate with company_name column to ensure schema update
-            print("📦 Recreating 'company_rankings' table with company_name...")
+            # Drop old table to cleanly apply the dual z-score schema update
+            print("📦 Recreating 'company_rankings' table with Dual Context Z-Scores...")
             cursor.execute("DROP TABLE IF EXISTS company_rankings;")
             
             sql_rankings = """
@@ -47,7 +46,8 @@ def create_tables():
                 symbol VARCHAR(10) PRIMARY KEY,
                 company_name VARCHAR(255),
                 industry VARCHAR(100) NOT NULL,
-                composite_z_score FLOAT,
+                industry_z_score FLOAT,
+                market_z_score FLOAT,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
             );
             """
@@ -61,6 +61,5 @@ def create_tables():
     finally:
         connection.close()
 
-# 5. Execute table creation directly from the terminal
 if __name__ == "__main__":
     create_tables()

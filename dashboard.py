@@ -4,7 +4,6 @@ import requests
 import numpy as np
 import plotly.graph_objects as go
 import yfinance as yf
-from datetime import datetime, timedelta
 import math
 
 # -------------------------------------------------------------------
@@ -17,16 +16,17 @@ st.markdown("""
     [data-testid="stAppViewContainer"] { background-color: #0E1117; color: #FAFAFA; }
     [data-testid="stHeader"] { background-color: transparent; }
     div[data-testid="metric-container"] {
-        background-color: #1A1C24; border: 1px solid #2D3139; padding: 15px;
-        border-radius: 12px; box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
+        background-color: #1A1C24; border: 1px solid #2D3139; padding: 15px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.5);
     }
-    [data-testid="stMetricLabel"] { color: #9CA3AF !important; font-weight: 500; }
-    [data-testid="stMetricValue"] { color: #FFFFFF !important; font-weight: 700; }
+    
+    /* Top Metrics UI/UX (Pure White, Bold, Larger Font) */
+    [data-testid="stMetricValue"] { color: #FFFFFF !important; font-weight: 800 !important; font-size: 1.8rem !important; }
+    [data-testid="stMetricLabel"] { color: #E5E7EB !important; font-weight: 600 !important; font-size: 1rem !important; }
+    
     .custom-subheader {
-        color: #FFFFFF; font-size: 1.25rem; font-weight: 600;
-        margin-bottom: 1rem; border-bottom: 1px solid #2D3139; padding-bottom: 0.5rem;
+        color: #FFFFFF; font-size: 1.25rem; font-weight: 600; margin-bottom: 1rem; border-bottom: 1px solid #2D3139; padding-bottom: 0.5rem;
     }
-    .streamlit-expanderHeader { color: #9CA3AF !important; font-size: 14px; }
+    .context-toggle { background-color: #1A1C24; padding: 10px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #2D3139; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -54,39 +54,60 @@ METRIC_INFO = {
 }
 
 # -------------------------------------------------------------------
-# 3. SEC Ticker Caching for Smart Autocomplete
+# 3. SEC Ticker Caching
 # -------------------------------------------------------------------
 @st.cache_data(ttl=86400)
 def load_ticker_mapping():
-    url = "https://www.sec.gov/files/company_tickers.json"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     try:
-        res = requests.get(url, headers=headers)
+        headers = {"User-Agent": "QuantDashboard/1.0 (Contact: admin@quantdashboard.com)"}
+        res = requests.get("https://www.sec.gov/files/company_tickers.json", headers=headers)
         res.raise_for_status()
         df = pd.DataFrame.from_dict(res.json(), orient='index')
-        df['display_name'] = df['title'] + " (" + df['ticker'] + ")"
         return df
-    except:
-        return pd.DataFrame(columns=['ticker', 'title', 'display_name'])
+    except Exception as e:
+        print(f"Error fetching SEC tickers: {e}")
+        return pd.DataFrame()
 
 # -------------------------------------------------------------------
-# 4. Header & Unified Search Interface
+# 4. Header & Split Search Interface
 # -------------------------------------------------------------------
 st.title("⚡ Advanced Quant Terminal")
-
 ticker_df = load_ticker_mapping()
-selected_option = st.selectbox(
-    "Search Company Name or Ticker (e.g., Amazon or AMZN)",
-    options=ticker_df['display_name'].tolist() if not ticker_df.empty else [],
+
+if 'search_name' not in st.session_state:
+    st.session_state.search_name = None
+if 'search_ticker' not in st.session_state:
+    st.session_state.search_ticker = None
+
+def clear_ticker():
+    st.session_state.search_ticker = None
+
+def clear_name():
+    st.session_state.search_name = None
+
+st.selectbox(
+    "🔍 Search by Company Name", 
+    options=ticker_df['title'].tolist() if not ticker_df.empty else [], 
     index=None,
-    placeholder="Click here and start typing to search..."
+    placeholder="Click and type Company Name (e.g., Amazon.com Inc.)",
+    key="search_name",
+    on_change=clear_ticker
+)
+
+st.selectbox(
+    "🏷️ Search by Ticker", 
+    options=ticker_df['ticker'].tolist() if not ticker_df.empty else [], 
+    index=None,
+    placeholder="Click and type Ticker (e.g., AMZN)",
+    key="search_ticker",
+    on_change=clear_name
 )
 
 selected_ticker = None
-if selected_option:
-    selected_ticker = selected_option.split("(")[-1].replace(")", "").strip()
-
-st.markdown("<br>", unsafe_allow_html=True)
+if st.session_state.search_name:
+    selected_ticker = ticker_df[ticker_df['title'] == st.session_state.search_name]['ticker'].values[0]
+elif st.session_state.search_ticker:
+    selected_ticker = st.session_state.search_ticker
 
 # -------------------------------------------------------------------
 # 5. Modular UI Tabs (Valuation vs. Rankings)
@@ -95,27 +116,29 @@ tab_valuation, tab_rankings = st.tabs(["🔍 Valuation Terminal", "🏆 Market R
 
 with tab_valuation:
     if selected_ticker:
-        with st.spinner(f"Aggregating institutional data for {selected_ticker}..."):
+        with st.spinner(f"Aggregating quantitative data for {selected_ticker}..."):
             try:
                 res = requests.get(f"http://localhost:8000/manual-valuation/{selected_ticker}")
-                
                 if res.status_code == 200:
                     data = res.json()
-                    company_name = data.get("company_name", selected_ticker)
-                    current_price = data.get("price", 0)
                     metrics = data.get("metrics", {})
                     benchmarks = data.get("benchmarks", {})
                     
-                    st.markdown(f"<div class='custom-subheader'>🏢 {company_name} ({selected_ticker}) Overview</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div class='custom-subheader'>🏢 {data.get('company_name')} ({selected_ticker})</div>", unsafe_allow_html=True)
                     
-                    col1, col2, col3, col4, col5 = st.columns(5)
-                    col1.metric("Live Price", f"${current_price:,.2f}")
-                    col2.metric("P/E Ratio", f"{metrics.get('PE_Ratio', 0):.2f}" if metrics.get('PE_Ratio') else "N/A")
-                    col3.metric("P/B Ratio", f"{metrics.get('PB_Ratio', 0):.2f}" if metrics.get('PB_Ratio') else "N/A")
-                    col4.metric("EV / EBITDA", f"{metrics.get('EV_EBITDA', 0):.2f}" if metrics.get('EV_EBITDA') else "N/A")
-                    col5.metric("ROE", f"{metrics.get('ROE', 0) * 100:.2f}%" if metrics.get('ROE') else "N/A")
+                    st.markdown("<div class='context-toggle'>", unsafe_allow_html=True)
+                    val_context = st.radio("Benchmark Context", ["Industry Context (Peers)", "Market Context (All Stocks)"], horizontal=True, label_visibility="collapsed")
+                    st.markdown("</div>", unsafe_allow_html=True)
                     
-                    st.markdown("<br>", unsafe_allow_html=True)
+                    b_key = "industry" if "Industry" in val_context else "market"
+                    context_label = data.get("industry") if "Industry" in val_context else "Total Market"
+                    
+                    cols = st.columns(5)
+                    cols[0].metric("Live Price", f"${data.get('price'):,.2f}")
+                    cols[1].metric("P/E", f"{metrics.get('PE_Ratio', 0):.2f}" if metrics.get('PE_Ratio') else "N/A")
+                    cols[2].metric("P/B", f"{metrics.get('PB_Ratio', 0):.2f}" if metrics.get('PB_Ratio') else "N/A")
+                    cols[3].metric("EV/EBITDA", f"{metrics.get('EV_EBITDA', 0):.2f}" if metrics.get('EV_EBITDA') else "N/A")
+                    cols[4].metric("ROE", f"{metrics.get('ROE', 0)*100:.2f}%" if metrics.get('ROE') else "N/A")
                     
                     chart_col, gauge_col = st.columns([2, 1])
                     
@@ -150,19 +173,28 @@ with tab_valuation:
                             y_min = min_price - (price_range * 0.05)
                             y_max = max_price + (price_range * 0.05)
                             
-                            pct_change = (((close_prices - start_price) / start_price) * 100).round(2)
-                            trend_color = '#00C805' if end_price >= start_price else '#FF5000'
+                            abs_change = end_price - start_price
+                            pct_change = (abs_change / start_price) * 100
+                            trend_color = '#00C805' if abs_change >= 0 else '#FF5000'
+                            sign = "+" if abs_change >= 0 else ""
+                            
+                            st.markdown(f"""
+                                <div style='margin-bottom: 15px;'>
+                                    <h1 style='color:#FFFFFF; font-size:2.5rem; font-weight:800; margin:0; padding:0;'>${end_price:,.2f}</h1>
+                                    <h3 style='color:{trend_color}; font-size:1.2rem; font-weight:600; margin:0; padding:0;'>{sign}${abs(abs_change):,.2f} ({sign}{pct_change:.2f}%)</h3>
+                                </div>
+                            """, unsafe_allow_html=True)
                             
                             fig_hist = go.Figure()
                             fig_hist.add_trace(go.Scatter(
-                                x=hist_data.index, y=close_prices, customdata=pct_change,
+                                x=hist_data.index, y=close_prices,
                                 mode='lines', line=dict(color=trend_color, width=2.5),
                                 fill='tozeroy', fillcolor=f"rgba({ '0, 200, 5' if trend_color == '#00C805' else '255, 80, 0' }, 0.1)",
-                                hovertemplate='%{x}<br><b>$%{y:.2f}</b> (%{customdata:+.2f}%)<extra></extra>'
+                                hovertemplate='%{x}<br><b>$%{y:.2f}</b><extra></extra>'
                             ))
                             
                             fig_hist.update_layout(
-                                hovermode='x unified', height=350, margin=dict(l=40, r=20, t=10, b=30), 
+                                hovermode='x unified', height=300, margin=dict(l=40, r=20, t=10, b=30), 
                                 plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
                                 xaxis=dict(showgrid=False, showticklabels=True, zeroline=False, showspikes=True, spikemode='across', spikesnap='cursor', showline=True, linecolor='#4B5563', spikedash='solid', spikethickness=1, spikecolor='gray'),
                                 yaxis=dict(showgrid=True, gridcolor='rgba(128,128,128,0.2)', showticklabels=True, zeroline=False, tickprefix="$", range=[y_min, y_max])
@@ -170,172 +202,178 @@ with tab_valuation:
                             st.plotly_chart(fig_hist, use_container_width=True, config={'displayModeBar': False})
                         else:
                             st.info(f"Price data unavailable for {selected_period}.")
-                    
+                            
                     with gauge_col:
-                        st.markdown("<div class='custom-subheader'>🧭 Valuation Verdict</div>", unsafe_allow_html=True)
-                        
-                        total_z = 0.0
-                        valid_count = 0
+                        st.markdown(f"<div class='custom-subheader'>🧭 Verdict vs {context_label}</div>", unsafe_allow_html=True)
+                        total_z, valid_count = 0.0, 0
                         for m_name, b_data in benchmarks.items():
-                            if "industry" in b_data and b_data["industry"].get("mean") and metrics.get(m_name):
-                                z = (metrics[m_name] - b_data["industry"]["mean"]) / (b_data["industry"]["std"] or 1)
+                            if b_key in b_data and b_data[b_key].get("mean") and metrics.get(m_name):
+                                z = (metrics[m_name] - b_data[b_key]["mean"]) / (b_data[b_key]["std"] or 1)
                                 total_z += -z if b_data.get("lower_is_better") else z
                                 valid_count += 1
-                                
-                        avg_z = total_z / valid_count if valid_count > 0 else 0
                         
-                        fig_gauge = go.Figure(go.Indicator(
-                            mode="gauge+number", value=avg_z,
-                            domain={'x': [0, 1], 'y': [0, 1]},
-                            number={'font': {'color': '#FFFFFF'}},
-                            title={'text': "Composite Z-Score", 'font': {'size': 14, 'color': '#9CA3AF'}},
+                        avg_z = total_z / valid_count if valid_count > 0 else 0
+                        z_font_color = "#A7F3D0" if avg_z >= 0 else "#FECDD3"
+                        display_z = max(min(avg_z, 2.0), -2.0)
+                        
+                        fig_g = go.Figure(go.Indicator(
+                            mode="gauge+number", value=avg_z, 
+                            title={'text': f"Z-Score ({b_key.title()})", 'font': {'color': '#9CA3AF'}},
+                            number={'font': {'color': z_font_color, 'weight': 'bold'}},
                             gauge={
-                                'axis': {'range': [-3, 3], 'tickwidth': 1, 'tickcolor': "#4B5563"},
-                                'bar': {'color': "#FFFFFF", 'thickness': 0.15},
-                                'bgcolor': "#1A1C24", 'borderwidth': 0,
+                                'axis': {'range': [-2, 2], 'tickwidth': 1, 'tickcolor': "#4B5563"},
+                                'bar': {'color': "rgba(0,0,0,0)", 'thickness': 0},
+                                'threshold': {
+                                    'line': {'color': "#FFFFFF", 'width': 4},
+                                    'thickness': 0.75,
+                                    'value': display_z
+                                },
                                 'steps': [
-                                    {'range': [-3, -0.5], 'color': "#FF5000"},
-                                    {'range': [-0.5, 0.5], 'color': "#FDBA74"},
-                                    {'range': [0.5, 3], 'color': "#00C805"}
-                                ],
+                                    {'range': [-2, -0.5], 'color': "#FF5000"}, 
+                                    {'range': [-0.5, 0.5], 'color': "#FDBA74"}, 
+                                    {'range': [0.5, 2], 'color': "#00C805"}
+                                ]
                             }
                         ))
-                        fig_gauge.update_layout(height=250, margin=dict(l=20, r=20, t=30, b=0), paper_bgcolor='rgba(0,0,0,0)')
-                        st.plotly_chart(fig_gauge, use_container_width=True, config={'displayModeBar': False})
-                        
-                        with st.expander("ℹ️ How is this calculated?"):
-                            st.markdown("**1. Calculation Methodology:**")
-                            st.write("The Composite Z-Score is the arithmetic average of all individual metric Z-scores, mathematically adjusted for target polarity. It represents the aggregated standard deviation from the industry mean.")
-                            st.markdown("**2. Target Polarity:**")
-                            st.write("📈 **Higher Score is Better.** A positive composite score indicates that the stock is fundamentally more attractive (undervalued or financially healthier) than its industry peers.")
-                            st.markdown("**3. Industry Percentile Ranking:**")
-                            cdf = (1.0 + math.erf(avg_z / math.sqrt(2.0))) / 2.0
-                            percentile = cdf * 100
-                            top_percent = 100 - percentile
-                            
-                            if top_percent < 50:
-                                st.write(f"With a Z-Score of {avg_z:.2f}, this company ranks in the **Top {top_percent:.1f}%** of its industry basket in terms of overall fundamental attractiveness.")
-                            else:
-                                st.write(f"With a Z-Score of {avg_z:.2f}, this company ranks in the **Bottom {percentile:.1f}%** of its industry basket, indicating it may be overvalued or underperforming.")
-
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    st.markdown("<div class='custom-subheader'>🔬 Fundamental Distribution Analysis</div>", unsafe_allow_html=True)
+                        fig_g.update_layout(height=250, margin=dict(l=20,r=20,t=30,b=0), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font=dict(color="white"))
+                        st.plotly_chart(fig_g, use_container_width=True, config={'displayModeBar': False})
                     
-                    grid_cols = st.columns(3)
-                    col_idx = 0
-                    
-                    for metric_name, benchmark_data in benchmarks.items():
-                        if "industry" not in benchmark_data: continue
-                            
-                        mean = benchmark_data["industry"].get("mean")
-                        std = benchmark_data["industry"].get("std")
-                        comp_val = metrics.get(metric_name)
-                        
-                        if comp_val is not None and mean is not None and std is not None and std > 0:
-                            with grid_cols[col_idx % 3]:
-                                with st.container(border=True):
-                                    st.markdown(f"<span style='color: #FFFFFF; font-weight: bold;'>{metric_name.replace('_', ' ')}</span>", unsafe_allow_html=True)
+                    st.markdown(f"<div class='custom-subheader'>🔬 Distribution vs {context_label}</div>", unsafe_allow_html=True)
+                    grid = st.columns(3)
+                    idx = 0
+                    for m_name, b_data in benchmarks.items():
+                        if b_key not in b_data: continue
+                        mean, std, val = b_data[b_key].get("mean"), b_data[b_key].get("std"), metrics.get(m_name)
+                        if val is not None and mean is not None and std is not None and std > 0:
+                            with grid[idx % 3].container(border=True):
+                                st.markdown(f"**{m_name.replace('_', ' ')}**")
+                                fig_d = go.Figure()
+                                x_axis = np.linspace(mean - 4*std, mean + 4*std, 100)
+                                y_axis = (1/(std*np.sqrt(2*np.pi))) * np.exp(-0.5*((x_axis-mean)/std)**2)
+                                fig_d.add_trace(go.Scatter(x=x_axis, y=y_axis, fill='tozeroy', marker=dict(color='#4A90E2')))
+                                
+                                raw_z = (val - mean) / std
+                                is_lower_better = b_data.get("lower_is_better")
+                                is_good = (-raw_z if is_lower_better else raw_z) > 0
+                                marker_color = '#00C805' if is_good else '#FF5000'
+                                
+                                fig_d.add_vline(x=val, line_color=marker_color)
+                                fig_d.add_vline(x=mean, line_dash="dot", line_color="gray")
+                                fig_d.update_layout(height=100, margin=dict(l=0,r=0,t=0,b=0), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', xaxis=dict(visible=False), yaxis=dict(visible=False), showlegend=False)
+                                st.plotly_chart(fig_d, use_container_width=True, config={'displayModeBar': False})
+                                st.caption(f"Val: {val:.2f} | Mean: {mean:.2f}")
+                                
+                                with st.expander("📊 Metric Details"):
+                                    info = METRIC_INFO.get(m_name, {"desc": "Detailed description currently unavailable.", "formula": ""})
                                     
-                                    fig_dist = go.Figure()
-                                    x_axis = np.linspace(mean - 4 * std, mean + 4 * std, 500)
-                                    y_axis = (1 / (std * np.sqrt(2 * np.pi))) * np.exp(-0.5 * ((x_axis - mean) / std) ** 2)
-                                    
-                                    fig_dist.add_trace(go.Scatter(
-                                        x=x_axis, y=y_axis, mode='lines', 
-                                        line=dict(color='#4A90E2', width=1.5),
-                                        fill='tozeroy', fillcolor='rgba(74, 144, 226, 0.1)', hoverinfo='skip'
-                                    ))
-                                    
-                                    raw_z = (comp_val - mean) / std
-                                    is_lower_better = benchmark_data.get("lower_is_better")
-                                    is_good = (-raw_z if is_lower_better else raw_z) > 0
-                                    marker_color = '#00C805' if is_good else '#FF5000'
-                                    
-                                    fig_dist.add_vline(x=comp_val, line_width=2, line_color=marker_color)
-                                    fig_dist.add_vline(x=mean, line_dash="dot", line_width=1, line_color="gray")
-                                    
-                                    fig_dist.update_layout(
-                                        height=130, margin=dict(l=0, r=0, t=5, b=0),
-                                        plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                                        xaxis=dict(showticklabels=False, showgrid=False, zeroline=False),
-                                        yaxis=dict(showticklabels=False, showgrid=False, zeroline=False),
-                                        showlegend=False
-                                    )
-                                    st.plotly_chart(fig_dist, use_container_width=True, config={'staticPlot': True, 'displayModeBar': False})
-                                    st.caption(f"Val: {comp_val:.2f} | Ind. Mean: {mean:.2f}")
-                                    
-                                    with st.expander("📊 Metric Details & Rank"):
-                                        info = METRIC_INFO.get(metric_name, {"desc": "Detailed description currently unavailable.", "formula": "N/A"})
-                                        st.markdown("**1. Calculation Formula:**")
-                                        if info["formula"] != "N/A":
-                                            st.latex(info["formula"])
-                                        st.markdown("**2. Financial Meaning:**")
-                                        st.write(info["desc"])
-                                        st.markdown("**3. Target Polarity:**")
-                                        if is_lower_better:
-                                            st.write("📉 **Lower is Better:** A smaller value relative to peers implies fundamental undervaluation or lower financial risk.")
-                                        else:
-                                            st.write("📈 **Higher is Better:** A larger value relative to peers implies greater operational profitability or efficiency.")
-                                            
-                                        st.markdown("**4. Industry Percentile Ranking:**")
-                                        cdf_val = (1.0 + math.erf(raw_z / math.sqrt(2.0))) / 2.0
-                                        raw_percentile = cdf_val * 100
+                                    st.markdown("**1. Calculation Formula:**")
+                                    if info.get("formula"):
+                                        st.latex(info["formula"])
+                                    else:
+                                        st.write("Formula unavailable.")
                                         
-                                        if is_lower_better:
-                                            st.write(f"This company's raw value sits at the **{raw_percentile:.1f}th percentile** of the industry distribution. Because lower is better for this metric, this places the company in the **Top {raw_percentile:.1f}%** most attractive peers.")
-                                        else:
-                                            attractive_percent = 100 - raw_percentile
-                                            st.write(f"This company's raw value sits at the **{raw_percentile:.1f}th percentile** of the industry distribution. Because higher is better for this metric, this places the company in the **Top {attractive_percent:.1f}%** most attractive peers.")
-
-                            col_idx += 1
-
-                else:
-                    try: err_msg = res.json().get("detail", "Unknown backend error.")
-                    except: err_msg = res.text
-                    st.error(f"⚠️ API Error [{res.status_code}]: {err_msg}")
-                    
-            except requests.exceptions.ConnectionError:
-                st.error("🚨 Connection Error: Unable to reach the FastAPI backend. Ensure it is running on port 8000.")
+                                    st.markdown("**2. Financial Meaning:**")
+                                    st.write(info["desc"])
+                                    
+                                    st.markdown("**3. Target Polarity:**")
+                                    if is_lower_better:
+                                        st.write("📉 **Lower is Better:** A smaller value relative to peers implies fundamental undervaluation or lower financial risk.")
+                                    else:
+                                        st.write("📈 **Higher is Better:** A larger value relative to peers implies greater operational profitability or efficiency.")
+                                        
+                                    st.markdown("**4. Percentile Ranking:**")
+                                    cdf_val = (1.0 + math.erf(raw_z / math.sqrt(2.0))) / 2.0
+                                    raw_percentile = cdf_val * 100
+                                    
+                                    if is_lower_better:
+                                        st.write(f"This company sits at the **{raw_percentile:.1f}th percentile** of the distribution. Because lower is better, this places the company in the **Top {raw_percentile:.1f}%** most attractive peers.")
+                                    else:
+                                        attractive_percent = 100 - raw_percentile
+                                        st.write(f"This company sits at the **{raw_percentile:.1f}th percentile** of the distribution. Because higher is better, this places the company in the **Top {attractive_percent:.1f}%** most attractive peers.")
+                                        
+                            idx += 1
+            except Exception as e: st.error(str(e))
 
 with tab_rankings:
-    st.markdown("<div class='custom-subheader'>📈 Top & Bottom 10 Valuation Rankings</div>", unsafe_allow_html=True)
+    st.markdown("<div class='custom-subheader'>📈 Top & Bottom 10 Rankings</div>", unsafe_allow_html=True)
+    
     try:
         ind_res = requests.get("http://localhost:8000/industries")
-        if ind_res.status_code == 200:
-            industries = ["All Industries"] + ind_res.json().get("industries", [])
-            selected_ind = st.selectbox("Filter by Industry", options=industries)
+        inds = ["All Industries"] + ind_res.json().get("industries", [])
+        
+        selected_ind = st.selectbox("Filter by Industry", options=inds)
+        
+        rank_res = requests.get(f"http://localhost:8000/rankings?industry={selected_ind}")
+        if rank_res.status_code == 200:
+            rank_data = rank_res.json()
             
-            rank_res = requests.get(f"http://localhost:8000/rankings?industry={selected_ind}")
-            if rank_res.status_code == 200:
-                rank_data = rank_res.json()
+            def fmt_df(d):
+                if not d: return pd.DataFrame()
+                df = pd.DataFrame(d).rename(columns={"symbol": "Symbol", "company_name": "Company Name", "industry": "Industry", "z_score": "Composite Z-Score"})
+                if "Composite Z-Score" in df.columns: 
+                    df["Composite Z-Score"] = df["Composite Z-Score"].round(2)
+                df.insert(0, 'Rank', range(1, len(df) + 1))
+                return df
                 
-                # Helper function to format dataframe with clean headers
-                def format_ranking_df(data_list):
-                    if not data_list:
-                        return pd.DataFrame()
-                    df = pd.DataFrame(data_list)
-                    # Rename columns for pristine UI presentation
-                    df = df.rename(columns={
-                        "symbol": "Symbol",
-                        "company_name": "Company Name",
-                        "industry": "Industry",
-                        "composite_z_score": "Composite Z-Score"
-                    })
-                    # Round Z-Score to 2 decimal places for cleaner presentation
-                    if "Composite Z-Score" in df.columns:
-                        df["Composite Z-Score"] = df["Composite Z-Score"].round(2)
-                    return df
+            top_df = fmt_df(rank_data.get("top_10", []))
+            bot_df = fmt_df(rank_data.get("bottom_10", []))
 
-                col_top, col_bot = st.columns(2)
-                with col_top:
-                    st.markdown("### 🏆 Top 10 (Undervalued / Healthy)")
-                    top_df = format_ranking_df(rank_data.get("top_10", []))
-                    st.dataframe(top_df, hide_index=True, use_container_width=True)
-                    
-                with col_bot:
-                    st.markdown("### 🚨 Bottom 10 (Overvalued / Risky)")
-                    bot_df = format_ranking_df(rank_data.get("bottom_10", []))
-                    st.dataframe(bot_df, hide_index=True, use_container_width=True)
-                    
-    except Exception as e:
-        st.warning("Backend rankings endpoint not reachable. Please ensure FastAPI is running and DB is updated.")
+            # Helper function to generate sleek Plotly Tables matching the dark mode UI
+            def create_ranking_table(df):
+                if df.empty: return go.Figure()
+                
+                # Assign colors conditionally for Z-Score
+                z_colors = ['#A7F3D0' if z >= 0 else '#FECDD3' for z in df['Composite Z-Score']]
+                
+                # Build color matrix column by column
+                cell_colors = []
+                for col in df.columns:
+                    if col == 'Composite Z-Score':
+                        cell_colors.append(z_colors)
+                    elif col == 'Rank':
+                        cell_colors.append(['#9CA3AF'] * len(df))
+                    elif col == 'Symbol':
+                        cell_colors.append(['#4A90E2'] * len(df))
+                    else:
+                        cell_colors.append(['#FAFAFA'] * len(df))
+                        
+                fig = go.Figure(data=[go.Table(
+                    columnwidth=[0.8, 1.2, 3.5, 2.5, 1.5],
+                    header=dict(
+                        values=[f"<b>{c}</b>" for c in df.columns],
+                        fill_color='#2D3139',
+                        font=dict(color='#FFFFFF', size=14),
+                        align='center',
+                        height=40,
+                        line_color='#0E1117'
+                    ),
+                    cells=dict(
+                        values=[df[c] for c in df.columns],
+                        fill_color='#1A1C24',
+                        font=dict(color=cell_colors, size=13),
+                        align=['center', 'center', 'left', 'center', 'center'],
+                        height=35,
+                        line_color='#0E1117'
+                    )
+                )])
+                
+                fig.update_layout(
+                    margin=dict(l=0, r=0, t=0, b=0),
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    height=400
+                )
+                return fig
+
+            st.markdown("### 🏆 Top 10 (Undervalued / Healthy Fundamentals)")
+            if not top_df.empty:
+                st.plotly_chart(create_ranking_table(top_df), use_container_width=True, config={'displayModeBar': False})
+            
+            st.markdown("<br>", unsafe_allow_html=True)
+            
+            st.markdown("### 🚨 Bottom 10 (Overvalued / Risky Fundamentals)")
+            if not bot_df.empty:
+                st.plotly_chart(create_ranking_table(bot_df), use_container_width=True, config={'displayModeBar': False})
+            
+    except Exception as e: 
+        st.warning(f"Backend error: Ensure FastAPI is running. Details: {e}")
