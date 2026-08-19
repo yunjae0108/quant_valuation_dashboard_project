@@ -1,0 +1,26 @@
+/* Tailwind CSS v4 Standard Import */
+@import "tailwindcss";
+
+@layer base {
+  body {
+    @apply bg-[#0B0E14] text-[#E2E2E2];
+  }
+}
+
+@layer utilities {
+  .glass-panel {
+    @apply bg-[#161A23] border border-white/5 rounded-2xl shadow-lg backdrop-blur-md;
+  }
+  
+  .glass-panel-hover {
+    @apply transition-all duration-300 ease-out;
+  }
+
+  .glass-panel-hover:hover {
+    @apply -translate-y-1 bg-[#1D222E] border-[#A8C7FA]/30 shadow-2xl;
+  }
+
+  .text-gradient {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-white to-[#A8C7FA];
+  }
+}
