@@ -3,9 +3,29 @@ from fastapi import FastAPI, HTTPException
 import yfinance as yf
 import pymysql
 from dotenv import load_dotenv
+import requests
 
 load_dotenv()
 app = FastAPI()
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+# (Keep your other existing imports here...)
+
+app = FastAPI(title="Quant Engine API")
+
+# -------------------------------------------------------------------
+# 🚨 SECURITY: CORS Middleware Configuration (Crucial for Next.js)
+# -------------------------------------------------------------------
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # Explicitly authorize Next.js frontend
+    allow_credentials=True,
+    allow_methods=["*"],                      # Allow all HTTP methods (GET, POST, OPTIONS, etc.)
+    allow_headers=["*"],                      # Allow all headers
+)
+
+# (Keep all your existing routes like @app.get("/manual-valuation/{ticker}") down here...)
 
 db_config = {
     "host": os.getenv("DB_HOST"), "port": int(os.getenv("DB_PORT", 16078)),
@@ -110,3 +130,75 @@ def get_rankings(industry: str = "All Industries", context: str = "Industry"):
                 bottom_10 = cursor.fetchall()
             return {"top_10": top_10, "bottom_10": bottom_10}
     finally: connection.close()
+    
+@app.get("/history/{ticker}")
+def get_stock_history(ticker: str, period: str = "6M"):
+    try:
+        # Map frontend timeframe to yfinance period & interval
+        period_map = {
+            "1D": ("1d", "5m"),
+            "1W": ("5d", "15m"),
+            "1M": ("1mo", "1d"),
+            "3M": ("3mo", "1d"),
+            "6M": ("6mo", "1d"),
+            "1Y": ("1y", "1d"),
+            "5Y": ("5y", "1wk"),
+            "ALL": ("max", "1mo")
+        }
+        yf_period, yf_interval = period_map.get(period.upper(), ("6mo", "1d"))
+        
+        stock = yf.Ticker(ticker)
+        hist = stock.history(period=yf_period, interval=yf_interval)
+        
+        if hist.empty:
+            return {"history": [], "error": "No data returned from Yahoo Finance."}
+            
+        history_data = []
+        for date, row in hist.iterrows():
+            # Correctly parse intraday vs daily timestamps
+            if 'm' in yf_interval or 'h' in yf_interval:
+                date_str = date.strftime('%Y-%m-%d %H:%M')
+            else:
+                date_str = date.strftime('%Y-%m-%d')
+                
+            history_data.append({
+                "date": date_str,
+                "price": round(float(row['Close']), 2)
+            })
+            
+        return {"history": history_data}
+    except Exception as e:
+        return {"history": [], "error": str(e)}
+
+@app.get("/tickers")
+def get_tickers():
+    """
+    Provides the frontend with the universe of available tickers.
+    Replace Method 1 with Method 2 if you want to pull directly from your Aiven SQL DB.
+    """
+    try:
+        # ---------------------------------------------------------
+        # METHOD 1: Fetching all active US companies (Easy & Robust)
+        # ---------------------------------------------------------
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        res = requests.get("https://www.sec.gov/files/company_tickers.json", headers=headers)
+        res.raise_for_status()
+        data = res.json()
+        
+        formatted_tickers = [{"symbol": item["ticker"], "title": item["title"]} for item in data.values()]
+        return {"tickers": formatted_tickers}
+
+        # ---------------------------------------------------------
+        # METHOD 2: Direct Aiven SQL Database Query (The 900 Universe)
+        # (Uncomment and modify this block to use exact 900 companies)
+        # ---------------------------------------------------------
+        # db_cursor = your_db_connection.cursor()
+        # db_cursor.execute("SELECT DISTINCT ticker, company_name FROM your_valuation_table")
+        # db_results = db_cursor.fetchall()
+        # 
+        # my_900_tickers = [{"symbol": row[0], "title": row[1]} for row in db_results]
+        # return {"tickers": my_900_tickers}
+
+    except Exception as e:
+        print(f"Backend Error Fetching Tickers: {e}")
+        return {"tickers": [], "error": str(e)}
